@@ -3,70 +3,55 @@
 import os
 import logging
 import random
+import sys
 import telebot
 from telebot import custom_filters, types
 from dotenv import load_dotenv
+from telebot.storage import StateMemoryStorage
 from application.db.work_database import (
+    add_personal_word,
+    get_all_words,
     get_or_create_user,
     get_random_word,
     get_wrong_words,
 )
-from telebot.storage import StateMemoryStorage
-from telebot.states import State, StatesGroup
-
-
-class Command:
-    TEACH = "Практиковаться"
-    ADD_WORD = "Добавить новое слово"
-    DELETE_WORD = "Удалить слово"
-    NEXT = "Дальше ⏭"
-
-
-class MyStates(StatesGroup):
-    correct_en = State()
-    correct_ru = State()
-    wrong_words = State()
+from application.init_bot_helpers import (
+    Command,
+    MyStates,
+    get_btns_start,
+    get_btns_teach,
+    show_hint,
+    show_target,
+)
 
 
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("Не найден токен бота! Проверьте файл .env")
-
-# ==================================
-# used_words: dict[int, list[int]] = {}
-
-
-# def save_word(user_id, word_id):
-#     used_words[user_id].append(word_id)
-
-
-# ==================================
-
-state_storage = StateMemoryStorage()
-bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
+BOT_TOKEN = os.getenv("BOT_TOKE")
+try:
+    if not BOT_TOKEN:
+        raise ValueError("Не найден токен бота! Проверьте файл .env")
+    state_storage = StateMemoryStorage()
+    bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
+except ValueError as e:
+    print(f"Ошибка инициализации: {e}")
+    sys.exit(1)
 
 
 @bot.message_handler(commands=["start"])
 def begin_work(message):
     """prompts the user to select an action"""
-    get_or_create_user(message.from_user.id)
+    get_or_create_user(message.from_user.id, message.from_user.first_name)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-
-    btn_start = types.KeyboardButton(Command.TEACH)
-    btn_add = types.KeyboardButton(Command.ADD_WORD)
-    btn_delete = types.KeyboardButton(Command.DELETE_WORD)
-    markup.add(btn_start, btn_add, btn_delete)
-
+    markup.add(*(get_btns_start()))
     welcome_text = (
         f"Привет, {message.from_user.first_name}! \n"
         "Я бот для изучения английских слов.\n"
-        "Выбери действие"
+        "Выбери действие:"
     )
     bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
 
 
-@bot.message_handler(func=lambda message: message.text == "Практиковаться")
+@bot.message_handler(func=lambda message: message.text == Command.TEACH)
 def start_teach(message):
     user_sql_id = get_or_create_user(message.from_user.id)
     word_data = ""
@@ -82,7 +67,6 @@ def start_teach(message):
 
     try:
         word_id, correct_ru, correct_en = word_data
-
         limit_wrong_words = 3
         wrong_words = get_wrong_words(word_id, limit_wrong_words)
         if len(wrong_words) != 3:
@@ -91,19 +75,14 @@ def start_teach(message):
 
         words_en = wrong_words.copy()
         words_en.append(correct_en)
-
         buttons = []
         words_en_btns = [types.KeyboardButton(word) for word in words_en]
         buttons.extend(words_en_btns)
         random.shuffle(buttons)
-        next_btn = types.KeyboardButton(Command.NEXT)
-        add_word_btn = types.KeyboardButton(Command.ADD_WORD)
-        delete_word_btn = types.KeyboardButton(Command.DELETE_WORD)
-        buttons.extend([next_btn, add_word_btn, delete_word_btn])
 
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        buttons.extend(get_btns_start())
         markup.add(*buttons)
-
         greeting = f"Выбери перевод слова:\n🇷🇺 {correct_ru}"
         bot.send_message(message.chat.id, greeting, reply_markup=markup)
 
@@ -126,6 +105,87 @@ def start_teach(message):
 @bot.message_handler(func=lambda message: message.text == Command.NEXT)
 def next_cards(message):
     start_teach(message)
+
+
+@bot.message_handler(func=lambda message: message.text == Command.BACK)
+def go_back(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(*(get_btns_start()))
+    welcome_text = "Выбери действие:"
+    bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+
+
+@bot.message_handler(func=lambda message: message.text == Command.SHOW_WORDS)
+def show_words(message):
+    words = get_all_words(message)
+    if words:
+        text = (
+            f"Всего слов (включая общие) на изучении: {len(words)}\n"
+            f"\n{", ".join([w[0] for w in words])}"
+        )
+    else:
+        text = "Что-то пошло не так, данные не получены. Попробуйте ещё раз"
+    bot.send_message(message.chat.id, text)
+
+
+@bot.message_handler(func=lambda message: message.text == Command.ADD_WORD)
+def add_word_message(message):
+    back_btn = types.KeyboardButton(Command.BACK)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(back_btn)
+    add_word_text = (
+        "Введи новое слово в формате\n"
+        "'на русском' - 'на английском',\n"
+        "например 'яблоко' - 'apple' и отправь его в сообщении"
+    )
+    msg = bot.send_message(message.chat.id, add_word_text, reply_markup=markup)
+    bot.register_next_step_handler(msg, handle_word)
+
+
+def handle_word(message):
+    user_sql_id = get_or_create_user(message.from_user.id)
+    text = message.text
+    words = [word.strip().capitalize() for word in text.split("-")]
+    if len(words) == 2:
+        word_ru, word_en = words
+        res = add_personal_word(user_sql_id, word_ru, word_en)
+        bot.send_message(message.chat.id, res)
+        go_back(message)
+    else:
+        bot.send_message(
+            message.chat.id, "Ошибка: Нужно ввести ровно два слова через тире"
+        )
+        go_back(message)
+
+
+@bot.message_handler(func=lambda message: True, content_types=["text"])
+def message_reply(message):
+    text = message.text
+    markup = types.ReplyKeyboardMarkup(row_width=2)
+    buttons = get_btns_teach()
+
+    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:  # type: ignore
+        correct_en = data["correct_en"]
+        wrong_words = data["wrong_words"]
+    if text == correct_en:
+        hint = show_target(data)
+        hint_text = ["Отлично!❤", hint]
+        hint = show_hint(*hint_text)
+        markup.add(*buttons)
+    else:
+        for i, btn in enumerate(wrong_words):
+            if btn == text:
+                wrong_words[i] = btn + " ❌"
+                break
+        hint = show_hint(
+            "Допущена ошибка!",
+            f"Попробуй ещё раз вспомнить слово 🇷🇺{data['correct_ru']}",
+        )
+        wrong_words.append(correct_en)
+        words_en_btns = [types.KeyboardButton(word) for word in wrong_words]
+        random.shuffle(words_en_btns)
+        markup.add(*words_en_btns, *buttons)
+    bot.send_message(message.chat.id, hint, reply_markup=markup)
 
 
 # =============================================================
