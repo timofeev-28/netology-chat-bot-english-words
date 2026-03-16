@@ -158,6 +158,45 @@ def add_personal_word(user_id, word_ru, word_en):
             return f"Слово '{word_ru}' уже есть в базе"
 
         except Exception as e:
+            conn.rollback()
+            print(f"Ошибка добавления слова: {e}")
+            return "Извините, что-то пошло не так.."
+        finally:
+            conn.close()
+
+
+def remove_personal_word(user_id, word):
+    """removing word"""
+    conn = get_db_connection()
+    if not conn:
+        return (
+            "Сбой соединения с базой данных, не удалось удалить слово,"
+            "попробуйте ещё раз"
+        )
+
+    with conn.cursor() as cursor:
+        try:
+            query_uw = """
+            SELECT uw.id
+            FROM words w
+            LEFT JOIN users_words uw ON w.id = uw.word_id
+            WHERE uw.user_id = %s AND
+                (w.word_ru = %s OR w.word_en = %s)
+            """
+            cursor.execute(query_uw, (user_id, word, word))
+            res = cursor.fetchone()
+            if res:
+                query_del = """
+                DELETE
+                FROM users_words
+                WHERE id = %s
+                """
+                cursor.execute(query_del, (res[0],))
+                conn.commit()
+                return f"Удаление слова '{word}' успешно завершено"
+            return f"Слова '{word}' нет среди твоих персональных слов"
+        except Exception as e:
+            conn.rollback()
             print(f"Ошибка добавления слова: {e}")
             return "Извините, что-то пошло не так.."
         finally:

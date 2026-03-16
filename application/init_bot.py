@@ -14,6 +14,7 @@ from application.db.work_database import (
     get_or_create_user,
     get_random_word,
     get_wrong_words,
+    remove_personal_word,
 )
 from application.init_bot_helpers import (
     Command,
@@ -26,7 +27,7 @@ from application.init_bot_helpers import (
 
 
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKE")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 try:
     if not BOT_TOKEN:
         raise ValueError("Не найден токен бота! Проверьте файл .env")
@@ -81,7 +82,7 @@ def start_teach(message):
         random.shuffle(buttons)
 
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        buttons.extend(get_btns_start())
+        buttons.extend(get_btns_teach())
         markup.add(*buttons)
         greeting = f"Выбери перевод слова:\n🇷🇺 {correct_ru}"
         bot.send_message(message.chat.id, greeting, reply_markup=markup)
@@ -125,7 +126,9 @@ def show_words(message):
         )
     else:
         text = "Что-то пошло не так, данные не получены. Попробуйте ещё раз"
-    bot.send_message(message.chat.id, text)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(*(get_btns_start()))
+    bot.send_message(message.chat.id, text, reply_markup=markup)
 
 
 @bot.message_handler(func=lambda message: message.text == Command.ADD_WORD)
@@ -156,6 +159,27 @@ def handle_word(message):
             message.chat.id, "Ошибка: Нужно ввести ровно два слова через тире"
         )
         go_back(message)
+
+
+@bot.message_handler(func=lambda message: message.text == Command.DELETE_WORD)
+def delete_words(message):
+    add_text = (
+        "Введи удаляемое слово в любом формате - "
+        "или на русском, или на английском,\n\n"
+        "например 'яблоко', или 'apple', и отправь его в сообщении"
+    )
+    msg = bot.send_message(
+        message.chat.id, add_text, reply_markup=types.ReplyKeyboardRemove()
+    )
+    bot.register_next_step_handler(msg, handle_delete_word)
+
+
+def handle_delete_word(message):
+    user_sql_id = get_or_create_user(message.from_user.id)
+    word = (message.text).strip().capitalize()
+    res = remove_personal_word(user_sql_id, word)
+    bot.send_message(message.chat.id, res)
+    go_back(message)
 
 
 @bot.message_handler(func=lambda message: True, content_types=["text"])
