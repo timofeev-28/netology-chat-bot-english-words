@@ -4,8 +4,6 @@ import psycopg2
 from dotenv import load_dotenv
 from application.db.initial_words import initial_words
 
-# from application.db.get_conn import get_db_connection
-
 
 load_dotenv()
 DB_HOST = os.getenv("DB_HOST")
@@ -34,7 +32,6 @@ def get_db_connection():
 def create_tables(conn):
     """Creating tables in the database"""
     cursor = conn.cursor()
-
     try:
         current_dir = Path(__file__).parent
         sql_file_path = current_dir / "create_tables.sql"

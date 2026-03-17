@@ -93,9 +93,10 @@ def get_all_words(user_id):
             FROM words w
             LEFT JOIN users_words uw ON w.id = uw.word_id
             LEFT JOIN users u ON uw.user_id = u.id
-            WHERE w.is_common = true OR uw.user_id = user_id
+            WHERE w.is_common = TRUE 
+               OR uw.user_id = %s
             """
-            cursor.execute(query, (user_id))
+            cursor.execute(query, (user_id,))
             result = cursor.fetchall()
         if result:
             return result
@@ -127,7 +128,9 @@ def add_personal_word(user_id, word_ru, word_en):
             result = cursor.fetchone()
             if result:
                 word_id = result[0]
+                conn.commit()
             else:
+                conn.rollback()
                 query = """
                 SELECT id
                 FROM words
@@ -135,7 +138,6 @@ def add_personal_word(user_id, word_ru, word_en):
                 """
                 cursor.execute(query, (word_ru, word_en))
                 word_id = cursor.fetchone()[0]  # type: ignore
-
             cursor.execute(
                 "INSERT INTO users_words (user_id, word_id)"
                 "VALUES (%s, %s)"
@@ -177,7 +179,7 @@ def remove_personal_word(user_id, word):
     with conn.cursor() as cursor:
         try:
             query_uw = """
-            SELECT uw.id
+            SELECT uw.id, w.id
             FROM words w
             LEFT JOIN users_words uw ON w.id = uw.word_id
             WHERE uw.user_id = %s AND
@@ -185,6 +187,7 @@ def remove_personal_word(user_id, word):
             """
             cursor.execute(query_uw, (user_id, word, word))
             res = cursor.fetchone()
+            print(res)
             if res:
                 query_del = """
                 DELETE
@@ -193,11 +196,27 @@ def remove_personal_word(user_id, word):
                 """
                 cursor.execute(query_del, (res[0],))
                 conn.commit()
+
+                query_check = """
+                SELECT uw.word_id
+                FROM users_words uw
+                WHERE uw.word_id = %s
+                """
+                cursor.execute(query_check, (res[1],))
+                is_link = cursor.fetchone()
+                if not is_link:
+                    query_del_word = """
+                    DELETE
+                    FROM words
+                    WHERE id = %s
+                    """
+                    cursor.execute(query_del_word, (res[1],))
+                    conn.commit()
                 return f"Удаление слова '{word}' успешно завершено"
             return f"Слова '{word}' нет среди твоих персональных слов"
         except Exception as e:
             conn.rollback()
-            print(f"Ошибка добавления слова: {e}")
+            print(f"Ошибка удаления слова: {e}")
             return "Извините, что-то пошло не так.."
         finally:
             conn.close()

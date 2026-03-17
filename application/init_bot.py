@@ -118,7 +118,8 @@ def go_back(message):
 
 @bot.message_handler(func=lambda message: message.text == Command.SHOW_WORDS)
 def show_words(message):
-    words = get_all_words(message)
+    user_sql_id = get_or_create_user(message.from_user.id)
+    words = get_all_words(user_sql_id)
     if words:
         text = (
             f"Всего слов (включая общие) на изучении: {len(words)}\n"
